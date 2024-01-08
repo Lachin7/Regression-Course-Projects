@@ -1,0 +1,688 @@
+---
+title: "Diabetes Risk Prediction"
+output: html_document
+date: "2023-07-02"
+---
+
+#### Lachin Naghashyar - 98110179
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(data.table)
+library(ggplot2)
+```
+
+```{r}
+d1 = fread('/Users/lachinnaghashyar/Downloads/diabetes_012_health_indicators_BRFSS2015.csv', encoding = 'UTF-8')
+d2 = fread('/Users/lachinnaghashyar/Downloads/diabetes_binary_5050split_health_indicators_BRFSS2015.csv', encoding = 'UTF-8')
+d3 = fread('/Users/lachinnaghashyar/Downloads/diabetes_binary_health_indicators_BRFSS2015.csv', encoding = 'UTF-8')
+```
+
+
+### Q1:  Investigating the contributition of the predictors as risk factors for diabetes prediction
+
+#### BMI 
+
+```{r}
+d1$Diabetes_012 = as.factor(d1$Diabetes_012)
+d2$Diabetes_binary = as.factor(d2$Diabetes_binary)
+d3$Diabetes_binary = as.factor(d3$Diabetes_binary)
+```
+
+```{r}
+ggplot(d1, aes(BMI, fill=Diabetes_012)) + geom_density(alpha=0.75)
+```
+
+```{r}
+ggplot(d2, aes(BMI, fill=Diabetes_binary)) + geom_density(alpha=0.75)
+```
+```{r}
+ggplot(d3, aes(BMI, fill=Diabetes_binary)) + geom_density(alpha=0.75)
+```
+
+It seems that individuals with lower scores of BMI are less prone to Diabetes and the ones with prediabetes or diabetes are much similar in BMI scores. We can also compare their histograms too:
+
+
+```{r}
+ggplot(d1, aes(BMI, fill=Diabetes_012)) + geom_histogram(alpha=0.75) + facet_grid(Diabetes_012 ~ .)
+```
+We know that a histogram shows the counts of values in each range, while a density plot shows the proportion of values in each range. This way, since the data is not balanced, we can use density or histogram with 'free_y' to compare them correctly.
+
+Overall, it seems that the BMI distribution is the most frequent between 22 and 30 and is one of the important risk factors for developing diabetes. Higher BMI correlates with the probability of occurrence of the disease.
+
+#### Age:
+
+```{r}
+ggplot(d1, aes(Age, group = Diabetes_012, color = Diabetes_012)) + geom_boxplot(alpha = 0.75)
+```
+
+```{r}
+ggplot(d2, aes(Age, group = Diabetes_binary, color = Diabetes_binary)) + geom_boxplot(alpha = 0.75)
+```
+
+```{r}
+ggplot(d3, aes(Age, group = Diabetes_binary, color = Diabetes_binary)) + geom_boxplot(alpha = 0.75)
+```
+
+This correlates with our prior knowledge that advanced age is a major risk factor for diabetes and prediabetes. Therefore, the elderly has a higher prevalence of diabetes and prediabetes than the young and middle-aged.
+
+
+#### NoDocbcCost
+
+```{r}
+d1$one = 1
+ds = d1[, .(n = sum(one)), .(Diabetes_012, NoDocbcCost)]
+ds[, n_total := sum(n), .(NoDocbcCost)]
+ds[, n_percent := n/n_total]
+ggplot(ds, aes(as.factor(NoDocbcCost), n_percent, fill = Diabetes_012)) + geom_bar(stat = 'identity',)
+```
+It seems that prediabetes and diabetes are related to this factor (Was there a time in the past 12 months when you needed to see a doctor but could not because of cost? 0 = no 1 = yes) which also makes sense.
+
+
+
+
+```{r}
+ggplot(d1, aes(x=Diabetes_012, y=GenHlth)) + 
+  geom_violin(trim=FALSE)
+```
+
+```{r}
+ggplot(d2, aes(x=Diabetes_binary, y=GenHlth)) + 
+  geom_violin(trim=FALSE)
+```
+The distribution of patients’ health states compared to their diabetes status is measured on a scale of 1 to 5, with 1 being the best and 5 being the worst. Furthermore, we can see that the most significant difference in the form of the distribution is that the density of class 0 is more on a scale of 1 to 3. Still, the density of class 1 is more widely dispersed from 1 to 5, indicating that the health state of diabetic patients is generally well managed.
+
+
+#### Education
+
+```{r}
+ggplot(d1, aes(x=Diabetes_012, y=Education)) + geom_violin(trim=FALSE)
+```
+```{r}
+ggplot(d2, aes(x=Diabetes_binary, y=Education)) + geom_violin(trim=FALSE)
+```
+The overall form and distribution of the recommendations for education compared to the diabetes status of patients (quartiles relatively close to each other).
+
+#### Income 
+
+```{r}
+ggplot(d1, aes(x=Diabetes_012, y=Income)) + geom_violin(trim=FALSE)
+```
+
+```{r}
+ggplot(d2, aes(x=Diabetes_binary, Income)) + geom_violin(trim=FALSE)
+```
+In a comparison of patient income when compared to diabetes status, we can see that the density of the plot increases with income level, indicating that the higher the income, the higher the chances of getting the disease. In contrast, people with class 1 diabetes have a plot evenly distributed on a scale of 1 to 8, indicating that all income level groups have the disease, while it is denser among the income levels of 5 to 8.
+
+### Q2: Feature Selection
+
+#### Data Preprocessing
+From here on, we are goining to use the second file as our data to proceed and feed in to our models. We could have used SMOTE or ADASYN to produce more synthetic data for minority class examples. However, in the second one the data is balanced and there are equal number of examples in both classes.
+
+
+#### Random Forest Method
+Random forest can be very effective to find a set of predictors that best explains the variance in the response variable.
+
+
+```{r}
+library(party)
+cf1 <- cforest(as.factor(Diabetes_binary) ~ . , data= d2, control=cforest_unbiased(mtry=2,ntree=50)) # fit the random forest
+varimp(cf1) # get variable importance, based on mean decrease in accuracy
+```
+As expected, GenHlth, High BP, BMI, Age, High Chol, DiffWalk, Income, ... are important features in the first one and the results are not so different when considering the correlations and imbalanced classes in the second and third one. 
+```{r}
+d2 = fread('/Users/lachinnaghashyar/Downloads/diabetes_binary_5050split_health_indicators_BRFSS2015.csv', encoding = 'UTF-8')
+Diabetes_binary = as.factor(d2$Diabetes_binary)
+```
+
+#### Step-wise Regression
+
+If you have large number of predictors (> 15), split the inputData in chunks of 10 predictors with each chunk holding the responseVar.
+
+```{r}
+base.mod <- lm(Diabetes_binary ~ 1 , data= d2)  # base intercept only model
+all.mod <- lm(Diabetes_binary ~ . , data= d2) # full model with all predictors
+stepMod <- step(base.mod, scope = list(lower = base.mod, upper = all.mod), direction = "both", trace = 0, steps = 1000)  # perform step-wise algorithm, both backward and forward
+shortlistedVars <- names(unlist(stepMod[[1]])) # get the shortlisted variable.
+shortlistedVars <- shortlistedVars[!shortlistedVars %in% "(Intercept)"]  # remove intercept 
+print(shortlistedVars)
+```
+
+The output could includes levels within categorical variables, since ‘stepwise’ is a linear regression based technique, as seen above. As expected, the features such as GenHlth, HighBp, BMI, Age, HighChol and etc, have higher importance. (Due to the nature of step-wise feature selection approach, we are not expecting the best model, but somehow a model and a result close to the optimal one)
+
+#### MARS
+The earth package implements variable importance based on Generalized cross validation (GCV), number of subset models the variable occurs (nsubsets) and residual sum of squares (RSS).
+```{r}
+library(earth)
+marsModel <- earth(as.factor(Diabetes_binary) ~ ., data=d2) # build model
+ev <- evimp (marsModel) # estimate variable importance
+plot(ev)
+```
+
+### Machine Learning Models
+Before proceeding forward, we have to specify the models we are going to use in this problem. Since it is a classification problem, we are going to make use of these five models: 1)Decision Tree (DT), 2)Random Forest (RF), 3)KNN, 4)Logistic Regression 5)Naive Bayes
+
+#### Decision Tree
+Decision tree is a machine learning method that visualizes how the created model
+predicts data. It builds a tree in which nodes of the tree represent features, branches
+represent which direction must be taken after each node and leaves represent
+predictions. Classes of given data can be predicted by traversing from root to leaves by choosing regarding branches. Decision tree also shows the importance of features, the
+most important and elective feature takes place at the root node. A maximum depth of 50 was chosen and criterion entropy was used to evaluate the leaf cleanliness.
+
+#### Random Forest
+RF is defined as a process that creates numerous decision trees by referring to each tree to make decisions. Typically, n number of datapoints are picked from the dataset, and by combining them, a stable decision is produced. If there are more guesses, the average of all predictions is used. The classification and regression problems are resolved using the RF technique. 
+The RF architecture is made up of several trees. Every tree offers a particular selection. By averaging all of the options, the most recent prediction is evaluated. As the data was clean and binary, we applied ten trees as depth. 
+
+#### KNN
+K nearest neighbor is a simple yet effective machine learning algorithm. Training data is
+represented in a graph and an assumption that examples of the same classes will be
+closely positioned. When predicting the label of an instance, position of that instance at
+graph is determined by using its features and the k neighbors that are closest to that
+point is found. Labels of these neighbors are considered and prediction of the model is
+returned as the most seen label among neighbors.The Manhattan or Euclidean distance functions are used for computing the classifications. A k-value of 3 is used as it was determined to be the best k-value for the dataset.
+
+#### Logistic Regression
+Logistic regression is a classification model rather than regression model. Logistic
+regression is a simple and more efficient method for binary and linear classification
+problems. It is a classification model, which is very easy to realize and achieves very
+good performance with linearly separable classes. It is an extensively employed
+algorithm for classification in industry.	LR is most commonly used for the classification of binary classes. It internally uses the sigmoid function to learn the linear relationships between variables. The solvers and penalty can be changed to see visible differences in the classification. In this study, a random state of 0 was used.
+
+#### Naive Bayes
+Naive Bayes is a machine learning algorithm that is based on Bayes theorem. It makes
+an assumption that all attributes are independent so it does not produce good results
+when the dataset size is large and it has a lot of features.
+
+
+### Metrics used for Evaluation of results
+After training, the classifiers are evaluated using several metrics based on the confusion matrix. The metrics include accuracy, sensitivity, specificity, ROC-AUC curve, and Precision–Recall curve. Confusion matrices and the formulae used to calculate these metrics are defined below.
+
+#### Accuracy
+The accuracy of a test is its power to accurately distinguish between sick and healthy
+individuals. When calculating the accuracy of the diagnostic test, the rate of true
+positive and true negative is calculated for all patients and healthy individuals. The
+accuracy value takes a value between 0 and 1.
+
+$Accuracy = \frac{𝑇𝑃 + 𝑇𝑁}{𝑇𝑃 + 𝑇𝑁 + 𝐹𝑃 + 𝐹P}$
+
+However, accuracy is not an adequate performance measure for assessing the power of the whole model on its own and is not truly predictive. Precision, Recall, and Specificity are used alongside accuracy to provide a more balanced evaluation approach.
+
+#### Hamming Loss
+The Hamming loss is the proportion of incorrect labels to total labels. Hammering loss is determined in multi-class classification as the hamming distance between ‘actual’ and ’predictions.’ Hamming loss penalizes only the individual labels in multi-label categorization. The lower the loss, the better the model performance.
+
+$ Hamming Loss = 1 - Accuracy $
+
+#### Precision
+In disease detection, predicted false positives can lead to misdiagnosis and cause wastage of healthcare resources, and improving the precision of diagnostic models can help to improve this problem. Precision quantifies the number of correctly forecast positive observations: This is accomplished by counting the samples that were correctly predicted as positive (TP) and dividing them by the total number of positive predictions, correct or incorrect (TP, FP).
+
+$Precision = \frac{TP}{TP + FP}$
+
+#### Recall
+Recall or sensitivity, like precision, aims to figure out the proportion of true positives that were accurately detected. It accomplishes this by dividing the correctly predicted positive samples (TP) by the total number of positives, either correctly or incorrectly predicted as positive (TP, FN). Recall measures the number of correct positive predictions out of all possible positive predictions made. 
+
+$Recall = \frac{TP}{TP + FN}$
+
+#### Specificity
+Specificity measures the percentage of actual negatives that were accurately identified. This is accomplished by dividing the number of correctly predicted negative samples by the total number of samples that were either correctly or mistakenly forecasted as negative (TN, FP). 
+
+$Specificity = \frac{TN}{FP + TN}$
+
+A detection system with a high specificity contributes to the issue of over-medicalization, as diagnosing a patient without diabetes as a person with diabetes can cause anxiety and unnecessary follow-up procedures
+
+#### F1-Score
+Depending on the problem being attempted to solve, in most cases a higher priority can
+be assigned to maximize precision or recall. However, there is a simpler statistic that
+takes into account both precision and recall, and attempts are made to maximize this
+number to improve the model. The F1 score is essentially a statistic that is the harmonic
+mean of precision and recall. The formula for the F1 score is entirely dependent on
+precision and recall.
+
+$F1Score = 2 \times \frac{Precision \times Recall}{Precision + Recall}$
+
+It can have a maximum value of 1, signifying flawless precision and recall, and a minimum value of 0 if either precision or recall is zero. 
+
+#### AUC
+The Precision–Recall curve is perfect when it is right-angle or perpendicular and maximized the area under the curve which is also referred to as AUC.
+
+
+### Q3 & Q4
+Yes, as we know, feature subset selection is the process of identifying and removing as much of the irrelevant and redundant information as possible. This reduces the dimensionality of the data and allows learning algorithms to operate faster and more effectively. With the methods used in the previous part, we are able to choose the most important features to use in our models.
+
+I decided to choose the following variables : GenHlth, HighBP, BMI, Age, HighChol, HvyAlcoholConsump and Income.
+
+```{r}
+library(plyr)
+library(readr)
+library(dplyr)
+library(caret)
+```
+
+```{r}
+d2 = fread('/Users/lachinnaghashyar/Downloads/diabetes_binary_5050split_health_indicators_BRFSS2015.csv', encoding = 'UTF-8')
+d2m = d2[,c("Diabetes_binary","GenHlth", "HighBP", "BMI", "Age", "HighChol", "HvyAlcoholConsump", "Income")]
+d2m
+```
+
+
+```{r}
+glimpse(d2m)
+```
+#### Exploratory Data Analysis
+```{r}
+# Checking for missing values 
+sum(is.na(d2m))
+```
+I guess all of the predictors except BMI are considered to be categorized in different levels. For exmaple it is stated in the documents that Age is partitioned into 13 levels.
+So let's factorize this variables
+```{r}
+# We will convert these into factor variables using the line of code below.
+d2m[,1:8] <- lapply(d2m[,1:8] , as.factor)
+d2m[,4] <- lapply(d2m[,4] , as.numeric)
+glimpse(d2m)
+
+```
+#### Create a Validation Dataset
+We need to know that the model we created is any good. Later, we will use statistical methods to estimate the accuracy of the models that we create on unseen data. We also want a more concrete estimate of the accuracy of the best model on unseen data by evaluating it on actual unseen data.
+That is, we are going to hold back some data that the algorithms will not get to see and we will use this data to get a second and independent idea of how accurate the best model might actually be.
+```{r}
+# create a list of 80% of the rows in the original dataset we can use for training
+validation_index <- createDataPartition(d2m$Diabetes_binary, p=0.80, list=FALSE)
+# select 20% of the data for validation
+validation <- d2m[-validation_index,]
+# use the remaining 80% of data to training and testing the models
+d2m <- d2m[validation_index,]
+```
+
+
+#### Building Models
+We reset the random number seed before reach run to ensure that the evaluation of each algorithm is performed using exactly the same data splits. It ensures the results are directly comparable.
+
+Let’s build our five models:
+
+```{r}
+cv_folds <- createFolds(d2m$Diabetes_binary, k = 5, returnTrain = TRUE)
+tuneGrid <- expand.grid(.mtry = c(1 : 10))
+
+ctrl <- trainControl(method = "cv",
+                     number = 5,
+                     search = 'grid',
+                     classProbs = TRUE,
+                     savePredictions = "final",
+                     index = cv_folds,
+                     summaryFunction = twoClassSummary) #in most cases a better summary for two class problems 
+
+metric = "ROC"
+```
+
+##### Decision Tree
+```{r}
+set.seed(7)
+fit.tree <- train(make.names(Diabetes_binary)~., data=d2m, method="rpart", metric=metric, trControl=ctrl)
+fit.tree
+```
+```{r}
+# plot the model
+plot(fit.tree$finalModel, uniform=TRUE,
+     main="Classification Tree")
+text(fit.tree$finalModel, all=TRUE, cex=.8)
+```
+##### Random Forest
+```{r}
+set.seed(7)
+fit.rf <- train(make.names(Diabetes_binary)~., data=d2m, method="rf", metric=metric, trControl=ctrl, ntree = 80, nodesize = c(1, 5))
+
+```
+
+```{r}
+fit.rf
+```
+
+##### KNN
+```{r}
+set.seed(7)
+fit.knn <- train(make.names(Diabetes_binary)~., data=d2m, method="knn", metric=metric, trControl=ctrl)
+```
+
+```{r}
+fit.knn
+```
+```{r}
+plot(fit.knn)
+```
+
+##### logistic regression
+```{r}
+set.seed(7)
+fit.lr <- train(make.names(Diabetes_binary)~., data=d2m, method="glm", metric=metric, trControl=ctrl)
+```
+
+```{r}
+fit.lr
+```
+##### Naive Bayes
+```{r}
+set.seed(7)
+fit.nb <- train(make.names(Diabetes_binary)~., data=d2m, method="nb", metric=metric, trControl=ctrl)
+```
+```{r}
+fit.nb
+```
+
+#### Model Selection
+
+We used ROC as our metric and now we can use it to compare the models to each other and select the best one amongst others.
+
+```{r}
+# summarize accuracy of models
+results <- resamples(list(DT=fit.tree, RF=fit.rf, knn=fit.knn, LR=fit.lr, NB=fit.nb))
+summary(results)
+```
+```{r}
+dotplot(results)
+```
+
+We can also compute their accuracy or other metrics. As we have seen we can compare their cp scores or use CV to select the best model.
+
+```{r}
+control <- trainControl(method="cv", number=5)
+metric <- "Accuracy"
+set.seed(7)
+fit.tree <- train(Diabetes_binary~., data=d2m, method="rpart", metric=metric, trControl=control)
+set.seed(7)
+fit.rf <- train(Diabetes_binary~., data=d2m, method="rf", metric=metric, trControl=control, ntree = 60, nodesize = c(1, 5))
+set.seed(7)
+fit.knn <- train(Diabetes_binary~., data=d2m, method="knn", metric=metric, trControl=control)
+set.seed(7)
+fit.lr <- train(Diabetes_binary~., data=d2m, method="glm", metric=metric, trControl=control)
+set.seed(7)
+fit.nb <- train(Diabetes_binary~., data=d2m, method="nb", metric=metric, trControl=control)
+```
+
+```{r}
+# compare accuracy of models
+results <- resamples(list(DT=fit.tree, RF=fit.rf, knn=fit.knn, LR=fit.lr, NB=fit.nb))
+dotplot(results)
+```
+```{r}
+fit.tree
+fit.rf
+fit.knn
+fit.lr
+fit.nb
+```
+
+
+It seems like LR (or specifically, generalized linear model) is the best in accuracy and ROC and rf comes next. However, we can reach better results if we run RF for larger number of trees. (Since it takes too long with caret on large dataset, I only used small number of trees)
+
+```{r}
+predictions <- predict(fit.lr, validation)
+confusionMatrix(as.factor(predictions), validation$Diabetes_binary)
+```
+Glm (or LR) and RF have similar results and glm is slightly better. We can proceed with both or if we are forced to choose one, then LR seems like a slightly better option.
+
+#### Feature Selection with the Caret R Package
+I saw another approach here https://machinelearningmastery.com/feature-selection-with-the-caret-r-package/ wich also seems pretty straight forward. However, after adjusting it for our problem, it takes too long to run and see the results (I even tried some packages to parallelize to procedure but again it takes too long). So I just included some parts of it here.
+
+Selecting the right features in your data can mean the difference between mediocre performance with long training times and great performance with short training times.
+
+The caret R package provides tools to automatically report on the relevance and importance of attributes in your data and even select the most important features for you.
+
+##### Remove Redundant Features
+Data can contain attributes that are highly correlated with each other. Many methods perform better if highly correlated attributes are removed. Generally, you want to remove attributes with an absolute correlation of 0.75 or higher.
+
+```{r}
+library(corrplot)
+d2 = fread('/Users/lachinnaghashyar/Downloads/diabetes_binary_5050split_health_indicators_BRFSS2015.csv', encoding = 'UTF-8')
+M = cor(d2)
+corrplot(M, method = 'number') # colorful number
+corrplot(M, method = 'color', order = 'alphabet')
+```
+```{r}
+# ensure results are repeatable
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+# calculate correlation matrix
+correlationMatrix <- cor(d2[,1:21])
+# find attributes that are highly corrected (ideally >0.75)
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff=0.5)
+# print indexes of highly correlated attributes
+print(highlyCorrelated)
+```
+```{r}
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores()[1] - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+```
+
+##### Rank Features By Importance
+The importance of features can be estimated from data by building a model. Some methods like decision trees have a built in mechanism to report on variable importance. For other algorithms, the importance can be estimated using a ROC curve analysis conducted for each attribute.
+
+The example below loads the Pima Indians Diabetes dataset and constructs an Learning Vector Quantization (LVQ) model. The varImp is then used to estimate the variable importance, which is printed and plotted.
+
+```{r}
+# prepare training scheme
+control <- trainControl(method="cv", number=4, allowParallel = TRUE)
+# train the model
+model <- train(as.factor(Diabetes_binary)~., data=d2, method="glm", preProcess="scale", trControl=control)
+# estimate variable importance
+importance <- varImp(model, scale=FALSE)
+# summarize importance
+print(importance)
+# plot importance
+plot(importance)
+```
+
+##### Feature Selection
+Automatic feature selection methods can be used to build many models with different subsets of a dataset and identify those attributes that are and are not required to build an accurate model.
+
+A popular automatic method for feature selection provided by the caret R package is called Recursive Feature Elimination or RFE.
+
+A Random Forest algorithm is used on each iteration to evaluate the model. The algorithm is configured to explore all possible subsets of the attributes. 
+
+![algorithm](/Users/lachinnaghashyar/Downloads/ref.png)
+```{r}
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=3)
+# run the RFE algorithm
+x = d2[,2:22]
+y = d2$Diabetes_binary
+results <- rfe(x, y,size=c(1:21), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+```
+It takes too long to run but will result in a model with optimal features.
+
+```{r}
+parallel::stopCluster(cluster)
+registerDoSEQ()
+```
+
+Instead, we can again use another approach:
+
+```{r}
+library(tidyverse)
+library(caret)
+library(leaps)
+```
+The R function regsubsets() can be used to identify different best models of different sizes. You need to specify the option nvmax, which represents the maximum number of predictors to incorporate in the model.
+
+```{r}
+d2 = fread('/Users/lachinnaghashyar/Downloads/diabetes_binary_5050split_health_indicators_BRFSS2015.csv', encoding = 'UTF-8')
+models <- regsubsets(Diabetes_binary~., data = d2, nvmax = 21)
+summary(models)
+```
+
+The best model, according to each of these metrics, can be extracted as follow:
+
+```{r}
+res.sum <- summary(models)
+data.frame(
+  Adj.R2 = which.max(res.sum$adjr2),
+  CP = which.min(res.sum$cp),
+  BIC = which.min(res.sum$bic)
+)
+```
+Using adj.R2 or Cp, we should go for a model with 19 variables. However, BIC suggests a model with 16 variables.
+
+K-fold cross-validation
+The average cross-validation error is computed as the model prediction error.
+
+```{r}
+
+get_model_formula <- function(id, object, outcome){
+  models <- summary(object)$which[id,-1]
+  predictors <- names(which(models == TRUE))
+  predictors <- paste(predictors, collapse = "+")
+  as.formula(paste0(outcome, "~", predictors))
+}
+```
+
+```{r}
+get_cv_error <- function(model.formula, data){
+  set.seed(1)
+  train.control <- trainControl(method = "cv", number = 5)
+  cv <- train(model.formula, data = data, method = "glm",
+              trControl = train.control)
+  cv$results$RMSE
+}
+```
+
+```{r}
+d2$Diabetes_binary = as.factor(d2$Diabetes_binary)
+# Compute cross-validation error
+model.ids <- 1:21
+cv.errors <-  map(model.ids, get_model_formula, models, "Diabetes_binary") %>%
+  map(get_cv_error, data = d2) %>%
+  unlist()
+cv.errors
+```
+This code stipend was working currectly the last time, I don't know what has happened now :(
+
+```{r}
+# Select the model that minimize the CV error
+which.min(cv.errors)
+```
+It seems that a model with variables has the lowest CV error.
+
+
+A better way of splitting the data is to not split it only into training and testing sets, but to also include a validation set. A typical ratio is 60% training, 20% validation, 20% testing.
+
+So instead of just measuring the test error, you would also measure the validation error.
+
+Validation is used mainly to tune hyperparameters - you don't want to tune them on the training set because that can result in overfitting, nor do you want to tune them on your test set because that results in an overly optimistic estimation of generalization. Thus we keep a separate set of data for the purpose of validation, that is, for tuning the hyperparameters - the validation set.
+
+
+The validation set is used during the training phase of the model to provide an unbiased evaluation of the model's performance and to fine-tune the model's parameters. The test set, on the other hand, is used after the model has been fully trained to assess the model's performance on completely unseen data.
+
+You can use these errors to identify what kind of problem you have if your model isn't performing well.
+```{r}
+d2 = fread('/Users/lachinnaghashyar/Downloads/diabetes_binary_5050split_health_indicators_BRFSS2015.csv', encoding = 'UTF-8')
+# Define the partition (e.g. 75% of the data for training)
+trainIndex <- createDataPartition(d2$Diabetes_binary, p = .75, 
+                                  list = FALSE, 
+                                  times = 1)
+
+# Split the dataset using the defined partition
+train_data <- d2[trainIndex, ,drop=FALSE]
+tune_plus_val_data <- d2[-trainIndex, ,drop=FALSE]
+
+# Define a new partition to split the remaining 25%
+tune_plus_val_index <- createDataPartition(tune_plus_val_data$Diabetes_binary,
+                                           p = .6,
+                                           list = FALSE,
+                                           times = 1)
+
+# Split the remaining ~25% of the data: 40% (tune) and 60% (val)
+tune_data <- tune_plus_val_data[-tune_plus_val_index, ,drop=FALSE]
+val_data <- tune_plus_val_data[tune_plus_val_index, ,drop=FALSE]
+
+# Outcome of this section is that the data (100%) is split into:
+# training (~75%)
+# tuning (~10%)
+# validation (~15%)
+```
+
+```{r}
+control <- trainControl(method="cv", number=5)
+metric <- "Accuracy"
+set.seed(7)
+fit.rf <- train(Diabetes_binary~., data=d2m, method="rf", metric=metric, trControl=control, ntree = 60, nodesize = c(1, 5))
+```
+
+```{r}
+fit.rf
+```
+we can now test on different hyperparameteres to choose a better model:
+```{r}
+predictions <- predict(fit.rf, tune_data)
+confusionMatrix(as.factor(predictions), tune_data$Diabetes_binary)
+```
+
+
+```{r}
+logistic_model <- function(alpha){ 
+    logistic_model <- glm(Diabetes_binary ~ . , data = train_data, family = "binomial") 
+    predict_reg <- predict(logistic_model, tune_data, type = "response") 
+    confusionMatrix <- confusionMatrix(as.factor(ifelse(predict_reg >alpha, 1, 0)), as.factor(tune_data$Diabetes_binary)) 
+
+    return(confusionMatrix$overall['Accuracy'])
+}
+```
+
+
+```{r}
+max_acc = 0
+max_alpha = 0
+for (i in seq(0.1 , 0.9, by = 0.05)){ 
+    acc = logistic_model(i) 
+    if(acc > max_acc){
+      max_acc = acc
+      max_alpha = i
+    }
+}
+max_acc
+max_alpha
+```
+
+```{r}
+max_acc = 0
+max_alpha = 0
+for (i in seq(0.1 , 0.9, by = 0.025)){ 
+    acc = logistic_model(i) 
+    if(acc > max_acc){
+      max_acc = acc
+      max_alpha = i
+    }
+}
+max_acc
+max_alpha
+```
+
+```{r}
+alpha  = 0.5 
+logistic_model <- glm(Diabetes_binary ~ . , data = train_data, family = "binomial") 
+predict_reg <- predict(logistic_model, val_data , type = "response") 
+confusionMatrix <- confusionMatrix(as.factor(ifelse(predict_reg >alpha, 1, 0) ), as.factor(val_data$Diabetes_binary)) 
+
+ 
+print(confusionMatrix$overall['Accuracy'])
+print(confusionMatrix$byClass['Pos Pred Value'])
+```
+(here we have train, tune and validation set, we can name them as train, val, test too. However, the main procedure is more important, that we tune the hyperparams on tune set and test the final model on test/val set)
+
+We can also use the tune_grid and CV which is used in line ~300.
+
+### Q5:
+In this part, we want to choose a model in which the computation cost(after the model is built) is lower. In general, non-parametric models such as KNN doesn't work (it is computationally infeasable for server to compute the distances in large spaces for each observation) but parametric models, NNs and DTs work better.
+decision trees are very fast during test time, as test inputs simply need to traverse down the tree to a leaf - the prediction is the majority label of the leaf; 3. decision trees require no metric because the splits are based on feature thresholds and not distances. Decision tree supports automatic feature interaction, whereas KNN cant. Decision tree is faster due to KNN's expensive real time execution.
+Moreover, when it comes to prediction accuracy, Logistic Regression is typically superior. On the other hand, decision tree is superior over a logistic regression when the data set is large and when the relationships between the different features and the target variable are complex and non-linear.
+Also by running all these different methods, random forest takes longer in test time too since the number of trees can be large. Although we can improve the accuracy of our RF by adding more trees, using larger number of trees will also make it slower to trian and test.
