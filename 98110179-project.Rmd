@@ -1,0 +1,382 @@
+---
+title: "Regression_hw1"
+output:
+  html_document: default
+  pdf_document: default
+date: "2023-04-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+Sys.setlocale(locale = 'persian')
+library(data.table)
+library(ggplot2)
+```
+First lets read the csv file using `fread` and look at its data.
+```{r}
+d = fread('/Users/lachinnaghashyar/Downloads/iranprovs_mortality_monthly.csv', encoding = 'UTF-8')
+d
+```
+
+
+```{r}
+
+d$ym_num = d$y + d$m / 12 - 1/24 # combine year and month fields in to one field
+
+ds = d[, .(n = sum(n)), .(y, m, ym_num)] # we want to sum the total death based on year and month
+
+ggplot(ds, aes(ym_num, n))+
+  geom_line()+
+  geom_point()+
+  scale_x_continuous(breaks = 1389:1401)+
+  scale_y_continuous(limits = c(0, 71000))+
+  geom_vline(xintercept = 1398 + 10/12 -1/24, linetype = 'dashed')
+
+```
+It seems that the death rate is somehow higher in the second half of each year. Morover, we can easily detect the sharp rise in the second half of year 1398 which corresponds to the corona visrus pandemic and the number of deaths almost doubled in this priod.
+
+## Q1
+First lets have total death based on both year, month and province. 
+```{r}
+ds = d[, .(n = sum(n)), .(y, m, ym_num, prov)]
+
+M = 10 # month
+PROV = unique(ds$prov)[13] #province
+dsm = ds[prov == PROV & m == M,] # have it for a fixed province and month
+
+ggplot(dsm, aes(ym_num, n))+
+ # geom_line()+
+  geom_point()+
+  scale_x_continuous(breaks = 1389:1401)+
+  geom_vline(xintercept = 1398 + 10/12 -1/24, linetype = 'dashed')
+```
+
+If we fit a line on all the data points, then the line will not be accurate. to avoid dealing with non-linear patterns we only look at the last 5 years
+
+```{r}
+ym_num_covid = 1398 + 10/12 - 1/24 # time covid starts (however, we are not also that sure about this in every place)
+ym_num_start = ym_num_covid - 5
+
+dsm = dsm[ym_num > ym_num_start]
+
+dsm2fit = dsm[ym_num < ym_num_covid]
+
+fit = lm(n ~ ym_num, dsm2fit)
+summary(fit)
+
+ggplot(dsm, aes(ym_num, n))+
+  geom_point(size=3)+
+  scale_x_continuous(breaks = 1389:1401)+
+  geom_vline(xintercept = 1398 + 10/12 -1/24, linetype = 'dashed')
+
+```
+However, the p-value is large and we can calculate the average and variance, then we can detect the outliers. Ususually, we should avoid the ones with large p-values.
+```{r}
+predict(fit ,dsm)
+```
+In order to detect the outliers and excess mortality, we can calculate the differneces of years after 1398 with the predicted values on the line. If this difference is larger than a particular threshold wich can be determined using the variance, then we can report it as a positive excess mortality.
+
+We are goinig to study the data based on different factors including month, province and age groups (not  but less such as 3 groups) separately. Sex is not a concern here and we are going to assume different sex groups (f/m) do not differ from each other drastically.
+
+We are going to have separete for loops for each of these factors and see if we can detect an excess mortality or not. (using the predicted value, real value and sigma as described above)
+
+In order to be able to compare different provinces with different populations, we can divide the population by the total number.
+
+
+```{r}
+dsm$n_predicted = predict(fit ,dsm)
+
+ggplot(dsm)+
+  geom_smooth(aes(ym_num, n_predicted), method = 'lm')+
+  geom_point(aes(ym_num, n), size = 3)+
+  scale_x_continuous(breaks = 1389:1401)+
+  geom_vline(xintercept = 1398 + 10/12 -1/24, linetype = 'dashed')+
+  ggtitle(label = PROV, subtitle = paste('month: ', M))
+```
+We extract the provinces and months from data:
+```{r}
+provinces = unique(d$prov)
+ds_corona = ds[ym_num >= ym_num_covid]
+months = sort(unique(ds_corona$ym_num), decreasing = F)
+
+provinces
+months
+length(provinces)
+length(months)
+```
+We want to show the strongness of excess mortality in differnet provinces during different times of every year of pandemic using a heatmap.
+```{r}
+
+res <- as.data.frame(matrix(0, nrow = 31, ncol = 34)) #result Q1 data frame
+res_normal <- as.data.frame(matrix(0, nrow = 31, ncol = 34)) #noraml result (as described)
+rownames(res) = provinces
+rownames(res_normal) = provinces
+colnames(res) = months
+colnames(res_normal) = months
+
+for(prov_ind in c(1:31)){
+  for(month_ind in c(1:12)){
+    province = provinces[prov_ind]
+    
+    dsm = ds[prov == province & m == month_ind,]
+    dsm = dsm[ym_num > ym_num_start]
+    dsm2fit = dsm[ym_num < ym_num_covid]
+    # fit the linear model on the years before corona 
+    fit = lm(n ~ ym_num, dsm2fit)
+    
+    # pull out p-value from a linear model
+    f <- summary(fit)$fstatistic
+    p_value <- pf(f[1],f[2],f[3],lower.tail=F) # p-value
+    attributes(p_value) <- NULL
+    
+    # if p_value is larger than 0.05 it means we are not certain so we are going to use mean value of model
+    if(p_value > 0.05){
+      dsm$expected = mean(dsm2fit$n) + 2*sd(dsm2fit$n)[1]
+      sd = sd(dsm2fit$n)[1]
+    }else{
+      dsm$expected = predict(fit ,dsm) + 2*summary(fit)$sigma
+      sd = summary(fit)$sigma
+    }
+    dsm$difference = dsm$n - dsm$expected 
+    dsm$difference[dsm$difference<0] = 0
+    # for outliers which indicate the excess mortality, we are going to add an extra 2*sd since we subtracted it in two lines above
+    dsm$difference[dsm$difference>0] = dsm$difference[dsm$difference>0] + 2*sd
+    dsm$difference_normal = dsm$difference / dsm$n
+    
+    dsm_res = dsm[ym_num >= ym_num_covid]
+    for (i in unique(dsm_res$ym_num)) {
+      res[province,as.character(i)] = as.integer(round(dsm_res[ym_num==i]$difference))
+      res_normal[province,as.character(i)] = dsm_res[ym_num==i]$difference_normal[1]
+    }
+    
+  }
+}
+
+```
+
+
+```{r}
+col_names = c("1398-10", "1398-11", "1398-12", "1399-1", "1399-2", 
+                "1399-3", "1399-4", "1399-5", "1399-6", "1399-7", 
+                "1399-8", "1399-9", "1399-10", "1399-11", "1399-12",
+                "1400-1", "1400-2", "1400-3", "1400-4", "1400-5", "1400-6", "1400-7", 
+                "1400-8", "1400-9", "1400-10", "1400-11", "1400-12",
+                "1401-1", "1401-2", "1401-3", "1401-4", "1401-5", "1401-6", "1401-7")
+colnames(res) = col_names
+colnames(res_normal) = col_names
+res_m <- as.matrix(res)
+res_normal_m <- as.matrix(res_normal)
+
+library(RColorBrewer)  
+heatmap(res_normal_m, col=brewer.pal(9, "Greens"), Colv = NA, Rowv = NA, scale="none")
+heatmap(res_m, col=brewer.pal(9, "Blues"), Colv = NA, Rowv = NA, scale="none")
+
+```
+
+We can indicate a strong corona related excess mortality in 1399-4, 1399-8, 1400-2, 1400-6, 1400-12 it also seems that overal the peak in 1400-6 was stronger than others.
+
+
+
+## Q2: total excess mortality in country?
+For this, since the death rate is not same in every province, we can first calculate this in each province and then sum them all up.
+
+```{r}
+sum(unlist(res))
+```
+
+## Q3: total excess mortality of each province?
+
+```{r}
+row_sum = rowSums(res)
+row_sum
+```
+Also we can view it sorted
+```{r}
+sort(row_sum)
+```
+A really simple approach would be to sum all the values of each province and see which one is bigger (Tehran is the max value and Khorasan shomali the min). However, some provinces might be older in population and this age ratio can affect the mortality. In order to prevent this, we can calculate the age death numbers for all age groups and multiply its inverse in the result to have a weighted some which can show us more reasonable results.
+## Q4
+```{r}
+dsa = d[ym_num < ym_num_covid] # this is for Q4
+dsa = dsa[, .(n = sum(n)), .(age_group)]# sum the total death based on age groups
+dsa
+```
+
+```{r}
+1/dsa$n * dsa$n
+```
+
+```{r}
+
+res <- as.data.frame(matrix(0, nrow = 31, ncol = 34)) #result Q1 data frame
+res_normal <- as.data.frame(matrix(0, nrow = 31, ncol = 34)) #noraml result (as described)
+rownames(res) = provinces
+rownames(res_normal) = provinces
+colnames(res) = months
+colnames(res_normal) = months
+ds = d[, .(n = sum(n)), .(y, m, ym_num, prov, age_group)]
+res4 <- as.data.frame(matrix(0, nrow = 31, ncol = 1)) #result Q4 data frame
+for(prov_ind in c(1:31)){
+  for(month_ind in c(1:12)){
+    province = provinces[prov_ind]
+    dsm = ds[prov == province & m == month_ind,]
+    dsm = dsm[ym_num > ym_num_start]
+    dsm2fit = dsm[ym_num < ym_num_covid]
+    # fit the linear model on the years before corona 
+    fit = lm(n ~ ym_num, dsm2fit)
+    
+    # pull out p-value from a linear model
+    f <- summary(fit)$fstatistic
+    p_value <- pf(f[1],f[2],f[3],lower.tail=F) # p-value
+    attributes(p_value) <- NULL
+    
+    # if p_value is larger than 0.05 it means we are not certain so we are going to use mean value of model
+    if(p_value > 0.05){
+      dsm$expected = mean(dsm2fit$n) + 2*sd(dsm2fit$n)[1]
+      sd = sd(dsm2fit$n)[1]
+    }else{
+      dsm$expected = predict(fit ,dsm) + 2*summary(fit)$sigma
+      sd = summary(fit)$sigma
+    }
+    dsm$difference = dsm$n - dsm$expected 
+    dsm$difference[dsm$difference<0] = 0
+    # for outliers which indicate the excess mortality, we are going to add an extra 2*sd since we subtracted it in two lines above
+    dsm$difference[dsm$difference>0] = dsm$difference[dsm$difference>0] + 2*sd
+    dsm$difference_normal = dsm$difference / dsm$n
+    
+    dsm_res = dsm[ym_num >= ym_num_covid]
+
+    
+    dsma = dsm_res[, .(n = sum(n)), .(age_group)]
+    
+    res4[prov_ind,1] = res4[prov_ind,1] + sum(dsma$n * (1/dsa$n))
+  }
+}
+provinces
+res4
+```
+
+
+We can see that index 6 has the min value which corresponds to Khorasan Junubi.
+
+
+Another idea is to remove all the data for ages older than 80 which is from 18th index of age groups.
+```{r}
+ds = d[, .(n = sum(n)), .(y, m, ym_num, prov, age_group)]
+ds = ds[ds$age_group<18]
+res4 <- as.data.frame(matrix(0, nrow = 31, ncol = 1)) #result Q4 data frame
+for(prov_ind in c(1:31)){
+  for(month_ind in c(1:12)){
+    province = provinces[prov_ind]
+    dsm = ds[prov == province & m == month_ind,]
+    dsm = dsm[ym_num > ym_num_start]
+    dsm2fit = dsm[ym_num < ym_num_covid]
+    # fit the linear model on the years before corona 
+    fit = lm(n ~ ym_num, dsm2fit)
+    
+    # pull out p-value from a linear model
+    f <- summary(fit)$fstatistic
+    p_value <- pf(f[1],f[2],f[3],lower.tail=F) # p-value
+    attributes(p_value) <- NULL
+    
+    # if p_value is larger than 0.05 it means we are not certain so we are going to use mean value of model
+    if(p_value > 0.05){
+      dsm$expected = mean(dsm2fit$n) + 2*sd(dsm2fit$n)[1]
+      sd = sd(dsm2fit$n)[1]
+    }else{
+      dsm$expected = predict(fit ,dsm) + 2*summary(fit)$sigma
+      sd = summary(fit)$sigma
+    }
+    dsm$difference = dsm$n - dsm$expected 
+    dsm$difference[dsm$difference<0] = 0
+    # for outliers which indicate the excess mortality, we are going to add an extra 2*sd since we subtracted it in two lines above
+    dsm$difference[dsm$difference>0] = dsm$difference[dsm$difference>0] + 2*sd
+    dsm$difference_normal = dsm$difference / dsm$n
+    
+    dsm_res = dsm[ym_num >= ym_num_covid]
+
+    
+    dsma = dsm_res[, .(n = sum(n)), .(age_group)]
+    
+    res4[prov_ind,1] = res4[prov_ind,1] + sum(dsma$n * (1/dsa$n))
+  }
+}
+provinces
+res4
+```
+```{r}
+ds = d[, .(n = sum(n)), .(y, m, ym_num, prov, age_group)]
+ds = ds[ds$age_group<18]
+ds = d[, .(n = sum(n)), .(y, m, ym_num, prov)]
+res <- as.data.frame(matrix(0, nrow = 31, ncol = 34)) #result Q1 data frame
+res_normal <- as.data.frame(matrix(0, nrow = 31, ncol = 34)) #noraml result (as described)
+rownames(res) = provinces
+rownames(res_normal) = provinces
+colnames(res) = months
+colnames(res_normal) = months
+
+for(prov_ind in c(1:31)){
+  for(month_ind in c(1:12)){
+    province = provinces[prov_ind]
+    
+    dsm = ds[prov == province & m == month_ind,]
+    dsm = dsm[ym_num > ym_num_start]
+    dsm2fit = dsm[ym_num < ym_num_covid]
+    # fit the linear model on the years before corona 
+    fit = lm(n ~ ym_num, dsm2fit)
+    
+    # pull out p-value from a linear model
+    f <- summary(fit)$fstatistic
+    p_value <- pf(f[1],f[2],f[3],lower.tail=F) # p-value
+    attributes(p_value) <- NULL
+    
+    # if p_value is larger than 0.05 it means we are not certain so we are going to use mean value of model
+    if(p_value > 0.05){
+      dsm$expected = mean(dsm2fit$n) + 2*sd(dsm2fit$n)[1]
+      sd = sd(dsm2fit$n)[1]
+    }else{
+      dsm$expected = predict(fit ,dsm) + 2*summary(fit)$sigma
+      sd = summary(fit)$sigma
+    }
+    dsm$difference = dsm$n - dsm$expected 
+    dsm$difference[dsm$difference<0] = 0
+    # for outliers which indicate the excess mortality, we are going to add an extra 2*sd since we subtracted it in two lines above
+    dsm$difference[dsm$difference>0] = dsm$difference[dsm$difference>0] + 2*sd
+    dsm$difference_normal = dsm$difference / dsm$n
+    
+    dsm_res = dsm[ym_num >= ym_num_covid]
+    for (i in unique(dsm_res$ym_num)) {
+      res[province,as.character(i)] = as.integer(round(dsm_res[ym_num==i]$difference))
+      res_normal[province,as.character(i)] = dsm_res[ym_num==i]$difference_normal[1]
+    }
+    
+  }
+}
+
+```
+
+
+```{r}
+col_names = c("1398-10", "1398-11", "1398-12", "1399-1", "1399-2", 
+                "1399-3", "1399-4", "1399-5", "1399-6", "1399-7", 
+                "1399-8", "1399-9", "1399-10", "1399-11", "1399-12",
+                "1400-1", "1400-2", "1400-3", "1400-4", "1400-5", "1400-6", "1400-7", 
+                "1400-8", "1400-9", "1400-10", "1400-11", "1400-12",
+                "1401-1", "1401-2", "1401-3", "1401-4", "1401-5", "1401-6", "1401-7")
+colnames(res) = col_names
+colnames(res_normal) = col_names
+res_m <- as.matrix(res)
+res_normal_m <- as.matrix(res_normal)
+
+library(RColorBrewer)  
+heatmap(res_normal_m, col=brewer.pal(9, "Greens"), Colv = NA, Rowv = NA, scale="none")
+heatmap(res_m, col=brewer.pal(9, "Blues"), Colv = NA, Rowv = NA, scale="none")
+
+```
+```{r}
+row_sum = rowSums(res)
+sort(row_sum)
+```
